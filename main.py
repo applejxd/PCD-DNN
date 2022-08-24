@@ -4,7 +4,7 @@ import tensorflow as tf
 from tensorflow import keras
 
 from modules.dataset import get_np_dataset
-from modules import tf_nn
+from modules import nn
 
 
 def main():
@@ -22,10 +22,10 @@ def main():
 
     num_classes = 10
     if os.path.exists("./output/point_net"):
-        models = keras.models.load_model()
+        models = keras.models.load_model("./output/point_net")
     else:
-        models = tf_nn.point_net(mean + int(diff/2), num_classes)
-        tf_nn.fit_tf_model(models, train_dataset, test_dataset)
+        models = nn.point_net(mean + int(diff/2), num_classes)
+        nn.fit_tf_model(models, train_dataset, test_dataset)
 
 
 if __name__ == "__main__":

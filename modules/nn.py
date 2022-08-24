@@ -39,32 +39,17 @@ def masked_max_pooling(inputs):
     return keras.layers.GlobalMaxPooling1D()(x)
 
 
-class OrthogonalRegularizer(keras.regularizers.Regularizer):
-    """
-    直交行列のための正則化項
-    """
+def orthogonal_regularizer(x, num_features):
+    l2reg = 0.001
 
-    def __init__(self, num_features, l2reg=0.001):
-        # 直交行列が作用する空間の次元
-        self.num_features = num_features
-        # 正則化項の係数
-        self.l2reg = l2reg
-        # 単位行列
-        self.eye = tf.eye(num_features)
-
-    def __call__(self, x):
-        """
-        :param x: 直列化した直交行列の成分
-        :return: 正則化項の値
-        """
-        # (バッチ数, 空間次元, 空間次元) の形に変形
-        x = tf.reshape(x, (-1, self.num_features, self.num_features))
-        # 3成分目同士で内積 → 成分は (バッチ数, 空間次元, バッチ数, 空間次元)
-        xxt = tf.tensordot(x, x, axes=(2, 2))
-        # (バッチ数, 空間次元, 空間次元) の形に変形
-        xxt = tf.reshape(xxt, (-1, self.num_features, self.num_features))
-        # reduce_sum は次元の指定がなければ全成分の総和
-        return tf.reduce_sum(self.l2reg * tf.square(xxt - self.eye))
+    # (バッチ数, 空間次元, 空間次元) の形に変形
+    x = tf.reshape(x, (-1, num_features, num_features))
+    # 3成分目同士で内積 → 成分は (バッチ数, 空間次元, バッチ数, 空間次元)
+    xxt = tf.tensordot(x, x, axes=(2, 2))
+    # (バッチ数, 空間次元, 空間次元) の形に変形
+    xxt = tf.reshape(xxt, (-1, num_features, num_features))
+    # reduce_sum は次元の指定がなければ全成分の総和
+    return tf.reduce_sum(l2reg * tf.square(xxt - tf.eye(num_features)))
 
 
 def tnet(inputs, num_features):
@@ -75,12 +60,9 @@ def tnet(inputs, num_features):
     :return:
     """
     x, mask = tf.split(inputs, num_or_size_splits=[-1, 1], axis=-1)
-    # 直列化したバイアス
-    bias = keras.initializers.Constant(np.eye(num_features).flatten())
-    reg = OrthogonalRegularizer(num_features)
 
-    # 近似的な対称関数を適用 (混合してから対称化)
-    x = conv_bn(inputs, 32)
+    # 近似的な対称関数を適用 (変換してから対称化)
+    x = conv_bn(x, 32)
     x = conv_bn(x, 64)
     x = conv_bn(x, 512)
     x = masked_max_pooling(x)
@@ -91,8 +73,8 @@ def tnet(inputs, num_features):
     x = keras.layers.Dense(
         num_features * num_features,  # 直交行列の成分数
         kernel_initializer="zeros",
-        bias_initializer=bias,
-        activity_regularizer=reg,
+        bias_initializer=keras.initializers.Constant(np.eye(num_features).flatten()),
+        activity_regularizer=lambda mat: orthogonal_regularizer(mat, num_features),
     )(x)
     feature_mat = keras.layers.Reshape((num_features, num_features))(x)
 
@@ -103,6 +85,14 @@ def tnet(inputs, num_features):
 
 
 def point_net(input_num, output_num):
+    """
+    Functional API で PointNet を定義.
+    (cf. https://dev.classmethod.jp/articles/tensorflow-keras-api-pattern/)
+
+    :param input_num:
+    :param output_num:
+    :return:
+    """
     inputs = keras.Input(shape=(input_num, 4))
 
     # 3次元空間の正準座標を求めて適用
