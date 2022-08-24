@@ -59,10 +59,8 @@ def tnet(inputs, num_features):
     :param num_features: 回転する次元数
     :return:
     """
-    x, mask = tf.split(inputs, num_or_size_splits=[-1, 1], axis=-1)
-
     # 近似的な対称関数を適用 (変換してから対称化)
-    x = conv_bn(x, 32)
+    x = conv_bn(inputs, 32)
     x = conv_bn(x, 64)
     x = conv_bn(x, 512)
     x = masked_max_pooling(x)
@@ -131,7 +129,7 @@ def fit_tf_model(model, train_dataset, test_dataset):
         metrics=["sparse_categorical_accuracy"],
     )
 
-    log_dir = "./logs/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_dir = "./output/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     os.makedirs(log_dir, exist_ok=True)
 
     tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)

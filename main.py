@@ -1,10 +1,11 @@
+import glob
 import os.path
 
 import tensorflow as tf
 from tensorflow import keras
 
 from modules.dataset import get_np_dataset
-from modules import nn
+from modules import nn, visualizer
 
 
 def main():
@@ -26,6 +27,9 @@ def main():
     else:
         models = nn.point_net(mean + int(diff/2), num_classes)
         nn.fit_tf_model(models, train_dataset, test_dataset)
+
+    log_file_list = glob.glob("./output/fit/*")
+    visualizer.open_tensorboard(log_file_list[-1])
 
 
 if __name__ == "__main__":
