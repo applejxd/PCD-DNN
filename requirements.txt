@@ -1,0 +1,6 @@
+# run: pip install -r requirements.txt
+trimesh
+numpy
+matplotlib
+tensorflow
+tensorboard
