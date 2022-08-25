@@ -7,22 +7,8 @@ from tensorflow import keras
 
 from modules.dataset import get_np_dataset
 from modules import nn, visualizer
+import open3d as o3d
 import matplotlib.pyplot as plt
-
-
-def plot_samples(points, predictions, labels, class_map):
-    # plot points with predicted class and label
-    fig = plt.figure(figsize=(15, 10))
-    points = points.numpy()
-    for i in range(8):
-        predicted_label = class_map[str(predictions[i].numpy())]
-        true_label = class_map[str(labels.numpy()[i])]
-
-        ax = fig.add_subplot(2, 4, i + 1, projection="3d")
-        ax.scatter(points[i, :, 0], points[i, :, 1], points[i, :, 2])
-        ax.set_title(f"pred: {predicted_label}, label: {true_label}")
-        ax.set_axis_off()
-    plt.show()
 
 
 def get_accuracy(model, test_dataset, class_map, draw):
@@ -30,18 +16,33 @@ def get_accuracy(model, test_dataset, class_map, draw):
     for dataset_idx in range(1, len(test_dataset) + 1):
         # パッチサイズ分だけ取得
         data = test_dataset.take(dataset_idx)
-        points, labels = list(data)[0]
+        point_clouds, labels = list(data)[0]
 
         # 各ラベルに対する予測確率を取得
-        predictions = model.predict(points)
+        predictions = model.predict(point_clouds)
         # 確率が最も高いラベルを取得
         predictions = tf.math.argmax(predictions, -1)
+        is_correct_list = predictions.numpy() == labels.numpy()
+        false_indexes = np.arange(0, len(labels))[~is_correct_list]
+
+        if draw:
+            for false_index in false_indexes:
+                points = np.array(point_clouds[false_index])
+                points = points[points[:, 3] == 1][:, :3]
+
+                pcd = o3d.geometry.PointCloud()
+                pcd.points = o3d.utility.Vector3dVector(points)
+
+                predict_label = class_map[str(predictions[false_index].numpy())]
+                true_label = class_map[str(labels.numpy()[false_index])]
+                window_name = f"prediction: {predict_label}, label: {true_label}"
+                o3d.visualization.draw_geometries([pcd], window_name=window_name)
 
         data_num += len(labels)
-        true_num += np.count_nonzero(predictions.numpy() == labels.numpy())
-        if draw:
-            plot_samples(points, predictions, labels, class_map)
-    print(f"Prediction accuracy: {true_num / data_num}")
+        true_num += np.count_nonzero(is_correct_list)
+
+    accuracy = true_num / data_num
+    print(f"Prediction accuracy: {accuracy}")
 
 
 def main():

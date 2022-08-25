@@ -4,3 +4,4 @@ numpy
 matplotlib
 tensorflow
 tensorboard
+open3d
