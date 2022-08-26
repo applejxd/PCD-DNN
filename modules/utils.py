@@ -22,4 +22,4 @@ logger.propagate = False
 def timer(name):
     t0 = time.time()
     yield
-    print(f'{name}: {time.time() - t0:.3f} s')
+    logger.info(f'{name}: {time.time() - t0:.3f} s')

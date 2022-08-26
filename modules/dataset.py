@@ -6,7 +6,8 @@ import urllib.request
 
 import numpy as np
 import trimesh
-from modules import util
+
+from modules import utils
 
 
 def _get_model_net_data():
@@ -14,12 +15,12 @@ def _get_model_net_data():
     zip_path = "./data/model_net.zip"
     if not os.path.exists(zip_path):
         # About 125 sec
-        with util.timer("zip download"):
+        with utils.timer("zip download"):
             urllib.request.urlretrieve(zip_url, zip_path)
 
     if not os.path.exists("./data/ModelNet10"):
         # About 19 sec
-        with util.timer("unzip"):
+        with utils.timer("unzip"):
             shutil.unpack_archive("./data/model_net.zip", "./data")
 
 
