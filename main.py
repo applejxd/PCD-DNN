@@ -6,7 +6,7 @@ import tensorflow as tf
 from tensorflow import keras
 
 from modules.dataset import get_np_dataset
-from modules import point_net_functional, visualizer
+from modules import point_net_model, visualizer
 import open3d as o3d
 import matplotlib.pyplot as plt
 
@@ -62,8 +62,8 @@ def main():
     if os.path.exists("./output/point_net"):
         model = keras.models.load_model("./output/point_net")
     else:
-        model = point_net_functional.point_net(mean + int(diff / 2), num_classes)
-        point_net_functional.fit_tf_model(model, train_dataset, test_dataset)
+        model = point_net_model.point_net(mean + int(diff / 2), num_classes)
+        point_net_model.fit_tf_model(model, train_dataset, test_dataset)
 
     log_file_list = glob.glob("./output/fit/*")
     visualizer.open_tensorboard(log_file_list[-1])

@@ -116,7 +116,7 @@ def point_net(input_num, output_num):
     # 確率出力
     outputs = keras.layers.Dense(output_num, activation="softmax")(x)
 
-    model = keras.Model(inputs=inputs, outputs=outputs, name="pointnet")
+    model = keras.Model(inputs=inputs, outputs=outputs, name="point_net")
     model.summary()
 
     return model
