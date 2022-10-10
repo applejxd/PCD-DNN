@@ -7,7 +7,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 
-from modules.dataset import get_np_dataset
+from modules.dataset import ModelNetDataset
 from modules import visualizer
 import open3d as o3d
 
@@ -130,19 +130,23 @@ def point_net(input_num, output_num):
 
 
 def fit_tf_model(model, train_dataset, test_dataset):
+    input_num = model.input_shape[-1]
+    class_num = model.output_shape[-1]
     model.compile(
         loss="sparse_categorical_crossentropy",
         optimizer=keras.optimizers.Adam(learning_rate=0.001),
         metrics=["sparse_categorical_accuracy"],
     )
 
-    log_dir = "./output/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_dir = f"./output/fit/PaddedPointNet_ModelNet{class_num}/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     os.makedirs(log_dir, exist_ok=True)
 
     tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
     model.fit(train_dataset, epochs=20, validation_data=test_dataset,
               callbacks=[tensorboard_callback])
-    model.save("./output/point_net")
+
+    pretrained_name = f"./models/PaddedPointNet_{input_num}_{class_num}"
+    model.save(pretrained_name)
 
 
 def get_accuracy(model, test_dataset, class_map, draw):
@@ -180,24 +184,17 @@ def get_accuracy(model, test_dataset, class_map, draw):
 
 
 def main():
-    mean, diff = 2048, 512
-    train_points, test_points, train_labels, test_labels, class_map = get_np_dataset(mean=mean, diff=diff)
+    max_num, max_diff = 1024, 128
+    class_num = 40
+    dataset = ModelNetDataset(class_num, cache=True)
+    train_dataset, test_dataset, class_map = dataset.get_dataset(max_num, max_diff)
 
-    # np.ndarray からデータセット (generator) 生成
-    train_dataset = tf.data.Dataset.from_tensor_slices((train_points, train_labels))
-    test_dataset = tf.data.Dataset.from_tensor_slices((test_points, test_labels))
-
-    # データ順のシャッフル・(ノイズ追加・点のシャッフル)・バッチ化
-    batch_size = 32
-    train_dataset = train_dataset.shuffle(len(train_points)).batch(batch_size)
-    test_dataset = test_dataset.shuffle(len(test_points)).batch(batch_size)
-
-    num_classes = 10
-    if os.path.exists("./output/point_net"):
-        model = keras.models.load_model("./output/point_net")
-    else:
-        model = point_net(mean + int(diff / 2), num_classes)
+    pretrained_name = f"./models/PaddedPointNet_{max_num}_{class_num}"
+    if not os.path.exists(pretrained_name):
+        model = point_net(max_num, class_num)
         fit_tf_model(model, train_dataset, test_dataset)
+    else:
+        model = keras.models.load_model(pretrained_name)
 
     log_file_list = glob.glob("./output/fit/*")
     visualizer.open_tensorboard(log_file_list[-1])

@@ -7,31 +7,21 @@ import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 
-from modules.dataset import get_np_dataset
+from modules.dataset import ModelNetDataset
 from modules import visualizer
 import open3d as o3d
 
 
-def conv_bn(shape, filters):
-    """
-    バッチ正則化付き pointwise 畳込み層
-    """
-    inputs = keras.Input(shape=shape)
-    x = keras.layers.Conv1D(filters, kernel_size=1, padding="valid")(inputs)
+def conv_bn(x, filters):
+    x = keras.layers.Conv1D(filters, kernel_size=1, padding="valid")(x)
     x = keras.layers.BatchNormalization(momentum=0.0)(x)
-    outputs = keras.layers.Activation("relu")(x)
-    return keras.Model(inputs, outputs, name="conv_bn")
+    return keras.layers.Activation("relu")(x)
 
 
-def dense_bn(shape, filters):
-    """
-    バッチ正則化付き全結合層
-    """
-    inputs = keras.Input(shape=shape)
-    x = keras.layers.Dense(filters)(inputs)
+def dense_bn(x, filters):
+    x = keras.layers.Dense(filters)(x)
     x = keras.layers.BatchNormalization(momentum=0.0)(x)
-    outputs = keras.layers.Activation("relu")(x)
-    return keras.Model(inputs, outputs, name="dense_bn")
+    return keras.layers.Activation("relu")(x)
 
 
 def orthogonal_regularizer(x, num_features):
@@ -47,35 +37,22 @@ def orthogonal_regularizer(x, num_features):
     return tf.reduce_sum(l2reg * tf.square(xxt - tf.eye(num_features)))
 
 
-def tnet(shape, num_features):
-    """
-    T-net
-    :param shape: 入力データの形状
-    :param num_features: 回転する次元数
-    :return:
-    """
-    inputs = keras.Input(shape=shape)
-
-    # 近似的な対称関数を適用 (変換してから対称化)
-    x = conv_bn(shape, 32)(inputs)
-    x = conv_bn(shape, 64)(x)
-    x = conv_bn(shape, 512)(x)
-    x = keras.layers.GlobalMaxPooling1D(x)
-
-    # 直交行列を学習
-    x = dense_bn(shape, 256)(x)
-    x = dense_bn(shape, 128)(x)
+def tnet(inputs, num_features):
+    x = conv_bn(inputs, 32)
+    x = conv_bn(x, 64)
+    x = conv_bn(x, 512)
+    x = keras.layers.GlobalMaxPooling1D()(x)
+    x = dense_bn(x, 256)
+    x = dense_bn(x, 128)
     x = keras.layers.Dense(
-        num_features * num_features,  # 直交行列の成分数
+        num_features * num_features,
         kernel_initializer="zeros",
         bias_initializer=keras.initializers.Constant(np.eye(num_features).flatten()),
         activity_regularizer=lambda mat: orthogonal_regularizer(mat, num_features),
     )(x)
-    feature_mat = keras.layers.Reshape((num_features, num_features))(x)
-
+    feat_T = keras.layers.Reshape((num_features, num_features))(x)
     # Apply affine transformation to input features
-    outputs = keras.layers.Dot(axes=(2, 1))([x, feature_mat])
-    return keras.Model(inputs, outputs, name="dense_bn")
+    return keras.layers.Dot(axes=(2, 1))([inputs, feat_T])
 
 
 def point_net(point_num, class_num):
@@ -87,52 +64,56 @@ def point_net(point_num, class_num):
     :param class_num:
     :return:
     """
-    encoder_inputs = keras.Input(shape=(point_num, 4))
+    encoder_inputs = keras.Input(shape=(point_num, 3))
     # 3次元空間の正準座標を求めて適用
-    x = tnet((point_num, 4), 3)(encoder_inputs)
+    x = tnet(encoder_inputs, 3)
     # 特徴量抽出
-    x = conv_bn((point_num, 4), 32)(x)
-    x = conv_bn((point_num, 32), 32)(x)
+    x = conv_bn(x, 32)
+    x = conv_bn(x, 32)
     # 特徴量空間の正準座標を求めて適用
-    x = tnet((point_num, 32), 32)(x)
+    x = tnet(x, 32)
     # 近似的な対称関数を適用 (混合してから対称化)
-    x = conv_bn((point_num, 32), 32)(x)
-    x = conv_bn((point_num, 32), 64)(x)
-    x = conv_bn((point_num, 64), 512)(x)
-    encoder_outputs = keras.layers.GlobalMaxPooling1D(x)
+    x = conv_bn(x, 32)
+    x = conv_bn(x, 64)
+    x = conv_bn(x, 512)
+    encoder_outputs = keras.layers.GlobalMaxPooling1D()(x)
     encoder_model = keras.Model(encoder_inputs, encoder_outputs, name="pointnet_encoder")
 
     # クラス分類
-    classifier_inputs = keras.Input(shape=(512, ))
-    x = dense_bn((512,), 256)(classifier_inputs)
+    classifier_inputs = keras.Input(shape=(512,))
+    x = dense_bn(classifier_inputs, 256)
     x = keras.layers.Dropout(0.3)(x)
-    x = dense_bn((256,), 128)(x)
+    x = dense_bn(x, 128)
     x = keras.layers.Dropout(0.3)(x)
-    # 確率出力
     classifier_outputs = keras.layers.Dense(class_num, activation="softmax")(x)
     classifier_model = keras.Model(classifier_inputs, classifier_outputs, name="pointnet_classifier")
 
-    inputs = keras.Input(shape=(point_num, 4))
-    model = keras.Model(inputs, classifier_model(encoder_model(x)), name="point_net")
+    inputs = keras.Input(shape=(point_num, 3))
+    model = keras.Model(inputs, classifier_model(encoder_model(inputs)), name="point_net")
     model.summary()
 
     return model
 
 
 def fit_tf_model(model, train_dataset, test_dataset):
+    input_num = model.input_shape[-1]
+    class_num = model.output_shape[-1]
     model.compile(
         loss="sparse_categorical_crossentropy",
         optimizer=keras.optimizers.Adam(learning_rate=0.001),
         metrics=["sparse_categorical_accuracy"],
     )
 
-    log_dir = "./output/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    log_dir = f"./output/fit/PointNet_ModelNet{class_num}/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     os.makedirs(log_dir, exist_ok=True)
 
     tensorboard_callback = tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
     model.fit(train_dataset, epochs=20, validation_data=test_dataset,
               callbacks=[tensorboard_callback])
-    model.save("./output/point_net")
+
+    pretrained_name = f"./models/PointNet_{input_num}_{class_num}"
+    model.save(pretrained_name)
+
 
 
 def get_accuracy(model, test_dataset, class_map, draw):
@@ -170,24 +151,17 @@ def get_accuracy(model, test_dataset, class_map, draw):
 
 
 def main():
-    mean, diff = 2048, 0
-    train_points, test_points, train_labels, test_labels, class_map = get_np_dataset(mean=mean, diff=diff)
+    max_num, max_diff = 1024, 128
+    class_num = 40
+    dataset = ModelNetDataset(class_num, cache=True)
+    train_dataset, test_dataset, class_map = dataset.get_dataset(max_num, max_diff, mask=False)
 
-    # np.ndarray からデータセット (generator) 生成
-    train_dataset = tf.data.Dataset.from_tensor_slices((train_points, train_labels))
-    test_dataset = tf.data.Dataset.from_tensor_slices((test_points, test_labels))
-
-    # データ順のシャッフル・(ノイズ追加・点のシャッフル)・バッチ化
-    batch_size = 32
-    train_dataset = train_dataset.shuffle(len(train_points)).batch(batch_size)
-    test_dataset = test_dataset.shuffle(len(test_points)).batch(batch_size)
-
-    num_classes = 10
-    if os.path.exists("./output/point_net"):
-        model = keras.models.load_model("./output/point_net")
-    else:
-        model = point_net(mean + int(diff / 2), num_classes)
+    pretrained_name = f"./models/PointNet_{max_num}_{class_num}"
+    if not os.path.exists(pretrained_name):
+        model = point_net(max_num, class_num)
         fit_tf_model(model, train_dataset, test_dataset)
+    else:
+        model = keras.models.load_model(pretrained_name)
 
     log_file_list = glob.glob("./output/fit/*")
     visualizer.open_tensorboard(log_file_list[-1])

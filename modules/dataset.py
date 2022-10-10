@@ -1,35 +1,21 @@
 import glob
 import json
 import os
+import re
 import shutil
 import urllib.request
 
 import numpy as np
+import tensorflow as tf
 import trimesh
 
 from modules import utils
 
 
-def _get_model_net_data():
-    zip_url = "http://3dvision.princeton.edu/projects/2014/3DShapeNets/ModelNet10.zip"
-    zip_path = "./data/model_net.zip"
-    if not os.path.exists(zip_path):
-        # About 125 sec
-        with utils.timer("zip download"):
-            urllib.request.urlretrieve(zip_url, zip_path)
-
-    if not os.path.exists("./data/ModelNet10"):
-        # About 19 sec
-        with utils.timer("unzip"):
-            shutil.unpack_archive("./data/model_net.zip", "./data")
-
-
-def _get_pcd_from_mesh(file, mean, diff):
+def _get_pcd_from_mesh(file, max_num, max_diff):
     # 一様分布でサンプル点数を設定
-    num_min = int(mean - diff / 2)
-    num_max = int(mean + diff / 2)
-    num_points = int(np.random.uniform(num_min, num_max))
-    padding_size = num_max - num_points
+    num_points = int(np.random.uniform(max_num - max_diff, max_num))
+    padding_size = max_num - num_points
 
     # サンプリング
     points = np.array(trimesh.load(file).sample(num_points))
@@ -44,53 +30,90 @@ def _get_pcd_from_mesh(file, mean, diff):
     return points
 
 
-def get_np_dataset(mean, diff):
-    _get_model_net_data()
+class ModelNetDataset:
+    def __init__(self, class_num, cache=True):
+        self.cache = cache
+        self.class_num = class_num
+        if class_num not in [10, 40]:
+            raise RuntimeError("invalid class_num")
 
-    # README 以外のフォルダ取得
-    file_path = "./data/ModelNet10"
-    folders = glob.glob(os.path.join(file_path, "[!README]*"))
+        # パス設定
+        if self.class_num == 10:
+            self.zip_url = "http://3dvision.princeton.edu/projects/2014/3DShapeNets/ModelNet10.zip"
+        elif self.class_num == 40:
+            self.zip_url = "http://modelnet.cs.princeton.edu/ModelNet40.zip"
+        else:
+            raise RuntimeError("invalid class_num")
 
-    train_points, train_labels = [], []
-    test_points, test_labels = [], []
-    class_map = {}
-    pcd_path, map_path = "./data/sampled_pcd", "./data/class_map.json"
-    if os.path.exists(f"{pcd_path}.npz") and os.path.exists(map_path):
-        sampled_pcd = np.load(f"{pcd_path}.npz")
-        train_points = sampled_pcd["train_points"]
-        train_labels = sampled_pcd["train_labels"]
-        test_points = sampled_pcd["test_points"]
-        test_labels = sampled_pcd["test_labels"]
+        self._download_dataset()
 
-        with open(map_path) as fp:
-            class_map = json.load(fp)
-    else:
-        for idx, folder in enumerate(folders):
-            print(f"processing class: {os.path.basename(folder)}")
-            # フォルダ名取得
-            class_map[idx] = folder.split("/")[-1]
-            # ファイル取得
-            train_files = glob.glob(os.path.join(folder, "train/*"))
-            test_files = glob.glob(os.path.join(folder, "test/*"))
+    def _download_dataset(self):
+        # zip ダウンロード
+        target_path = f"./data/ModelNet{self.class_num}.zip"
+        if not os.path.exists(target_path):
+            # About 125 sec
+            with utils.timer("zip download"):
+                urllib.request.urlretrieve(self.zip_url, target_path)
 
-            for train_file in train_files:
-                points = _get_pcd_from_mesh(train_file, mean=mean, diff=diff)
-                train_points.append(points)
-                train_labels.append(idx)
+        # zip 展開
+        target_path = f"./data/ModelNet{self.class_num}"
+        if not os.path.exists(target_path):
+            # About 19 sec
+            with utils.timer("unzip"):
+                shutil.unpack_archive(f"{target_path}.zip", "./data")
 
-            for test_file in test_files:
-                points = _get_pcd_from_mesh(test_file, mean=mean, diff=diff)
-                test_points.append(points)
-                test_labels.append(idx)
+    def get_data(self, max_num, max_diff):
+        pcd_path = f"./data/ModelNet{self.class_num}_points_{max_num}_{max_diff}"
+        map_path = f"./data/ModelNet{self.class_num}_classes.json"
+        # README 以外のフォルダ取得
+        folders = [p for p in glob.glob('./data/ModelNet10/*') if re.search('^(?!.*txt$).*$', p)]
 
-        train_points = np.array(train_points)
-        test_points = np.array(test_points)
-        train_labels = np.array(train_labels)
-        test_labels = np.array(test_labels)
+        train_points, train_labels = [], []
+        test_points, test_labels = [], []
+        class_map = {}
+        if self.cache and os.path.exists(f"{pcd_path}.npz") and os.path.exists(map_path):
+            sampled_pcd = np.load(f"{pcd_path}.npz")
+            train_points, train_labels = sampled_pcd["train_points"], sampled_pcd["train_labels"]
+            test_points, test_labels = sampled_pcd["test_points"], sampled_pcd["test_labels"]
 
-        np.savez(pcd_path, train_points=train_points, test_points=test_points,
-                 train_labels=train_labels, test_labels=test_labels)
-        with open(map_path, "w") as fp:
-            json.dump(class_map, fp)
+            with open(map_path) as fp:
+                class_map = json.load(fp)
+        else:
+            for idx, folder in enumerate(folders):
+                print(f"processing class: {os.path.basename(folder)}")
+                # フォルダ名取得
+                class_map[idx] = folder.split("/")[-1]
+                # ファイル取得
+                train_files = glob.glob(os.path.join(folder, "train/*"))
+                test_files = glob.glob(os.path.join(folder, "test/*"))
 
-    return train_points, test_points, train_labels, test_labels, class_map
+                train_points += [_get_pcd_from_mesh(train_file, max_num, max_diff) for train_file in train_files]
+                train_labels += [idx for _ in train_files]
+                test_points += [_get_pcd_from_mesh(test_file, max_num, max_diff) for test_file in test_files]
+                test_labels += [idx for _ in test_files]
+
+            train_points, test_points = np.array(train_points), np.array(test_points)
+            train_labels, test_labels = np.array(train_labels), np.array(test_labels)
+
+            np.savez(pcd_path, train_points=train_points, test_points=test_points,
+                     train_labels=train_labels, test_labels=test_labels)
+            with open(map_path, "w") as fp:
+                json.dump(class_map, fp)
+
+        return train_points, test_points, train_labels, test_labels, class_map
+
+    def get_dataset(self, max_num, max_diff, batch_size=32, mask=True):
+        train_points, test_points, train_labels, test_labels, class_map = self.get_data(max_num, max_diff)
+        if not mask:
+            train_points = train_points[:, :, :3]
+            test_points = test_points[:, :, :3]
+
+        # np.ndarray からデータセット (generator) 生成
+        train_dataset = tf.data.Dataset.from_tensor_slices((train_points, train_labels))
+        test_dataset = tf.data.Dataset.from_tensor_slices((test_points, test_labels))
+
+        # データ順のシャッフル・(ノイズ追加・点のシャッフル)・バッチ化
+        train_dataset = train_dataset.shuffle(len(train_points)).batch(batch_size)
+        test_dataset = test_dataset.shuffle(len(test_points)).batch(batch_size)
+
+        return train_dataset, test_dataset, class_map
