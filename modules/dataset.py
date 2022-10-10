@@ -7,6 +7,8 @@ import urllib.request
 
 import numpy as np
 import tensorflow as tf
+import torch
+from torch.utils import data
 import trimesh
 
 from modules import utils
@@ -28,6 +30,20 @@ def _get_pcd_from_mesh(file, max_num, max_diff):
 
     np.random.shuffle(points)
     return points
+
+
+class ModelNetTorchDataSet(torch.utils.data.Dataset):
+    def __init__(self, points: np.ndarray, labels: np.ndarray):
+        super().__init__()
+        self.points = points
+        self.labels = labels
+
+    def __len__(self):
+        return self.points.shape[0]
+
+    def __getitem__(self, index):
+        # index番目の入出力ペアを返す
+        return self.points[index], self.labels[index]
 
 
 class ModelNetDataset:
@@ -102,7 +118,7 @@ class ModelNetDataset:
 
         return train_points, test_points, train_labels, test_labels, class_map
 
-    def get_dataset(self, max_num, max_diff, batch_size=32, mask=True):
+    def get_tf_dataset(self, max_num, max_diff, batch_size=32, mask=True):
         train_points, test_points, train_labels, test_labels, class_map = self.get_data(max_num, max_diff)
         if not mask:
             train_points = train_points[:, :, :3]
@@ -117,3 +133,16 @@ class ModelNetDataset:
         test_dataset = test_dataset.shuffle(len(test_points)).batch(batch_size)
 
         return train_dataset, test_dataset, class_map
+
+    def get_torch_dataloader(self, max_num, max_diff, batch_size=32, mask=True):
+        train_points, test_points, train_labels, test_labels, class_map = self.get_data(max_num, max_diff)
+        if not mask:
+            train_points = train_points[:, :, :3]
+            test_points = test_points[:, :, :3]
+
+        train_dataset = ModelNetTorchDataSet(train_points, train_labels)
+        test_dataset = ModelNetTorchDataSet(test_points, test_labels)
+
+        train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
+        return train_dataloader, test_dataloader, class_map

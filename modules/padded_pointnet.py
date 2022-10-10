@@ -187,7 +187,7 @@ def main():
     max_num, max_diff = 1024, 128
     class_num = 40
     dataset = ModelNetDataset(class_num, cache=True)
-    train_dataset, test_dataset, class_map = dataset.get_dataset(max_num, max_diff)
+    train_dataset, test_dataset, class_map = dataset.get_tf_dataset(max_num, max_diff)
 
     pretrained_name = f"./models/PaddedPointNet_{max_num}_{class_num}"
     if not os.path.exists(pretrained_name):
